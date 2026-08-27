@@ -62,6 +62,12 @@ const useMapsUrlBtn =
 const locationStatus =
     document.getElementById("locationStatus");
 
+const submitFormBtn =
+    document.getElementById("submitFormBtn");
+
+const submitFormBtnContent =
+    submitFormBtn.innerHTML;
+
 
 takePhotoBtn.addEventListener(
     "click",
@@ -952,6 +958,13 @@ document.getElementById(
         }
 
 
+        submitFormBtn.disabled =
+            true;
+
+        submitFormBtn.innerHTML =
+            '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Enviando...';
+
+
         const formData =
             new FormData(
                 event.target
@@ -1035,6 +1048,12 @@ document.getElementById(
             photoStatus.textContent =
                 "No hay fotografía seleccionada.";
 
+            submitFormBtn.disabled =
+                false;
+
+            submitFormBtn.innerHTML =
+                submitFormBtnContent;
+
         }
 
 
@@ -1045,6 +1064,12 @@ document.getElementById(
             alert(
                 "Ocurrió un error al enviar el registro."
             );
+
+            submitFormBtn.disabled =
+                false;
+
+            submitFormBtn.innerHTML =
+                submitFormBtnContent;
 
         }
 
