@@ -1,0 +1,22 @@
+{
+  "records": [
+    {
+      "nombre": "Ana Gomez",
+      "descripcion": "Contacto cargado por JSON",
+      "telefono": "3001234567",
+      "latitude": 4.710989,
+      "longitude": -74.072092,
+      "maps_url": "",
+      "photo_url": "gs://habi-form-aravel-344022-dev-images/evidence/demo.jpg"
+    },
+    {
+      "nombre": "Carlos Perez",
+      "descripcion": "Registro con URL de Google Maps",
+      "telefono": "+573109876543",
+      "latitude": "",
+      "longitude": "",
+      "maps_url": "https://www.google.com/maps/@4.6482837,-74.2478938,17z",
+      "photo_url": ""
+    }
+  ]
+}

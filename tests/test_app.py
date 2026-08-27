@@ -14,7 +14,9 @@ def client(monkeypatch):
     monkeypatch.delenv("IMAGE_BUCKET", raising=False)
     monkeypatch.delenv("BQ_SUBMISSIONS_TABLE", raising=False)
     monkeypatch.delenv("BQ_CALL_ATTEMPTS_TABLE", raising=False)
+    monkeypatch.delenv("BQ_BULK_UPLOADS_TABLE", raising=False)
     monkeypatch.delenv("PUBSUB_TOPIC", raising=False)
+    monkeypatch.delenv("DATAFLOW_ENABLED", raising=False)
     return app.test_client()
 
 
@@ -126,3 +128,84 @@ def test_process_call_accepts_pubsub_payload(client, monkeypatch):
     assert response.json["status"] == "successful"
     assert response.json["scheduled_visit"] is True
     assert inserted[0][0] == "BQ_CALL_ATTEMPTS_TABLE"
+
+
+def test_bulk_template_download(client):
+    response = client.get("/habi/data_crawling/bulk_phone_template.csv")
+
+    assert response.status_code == 200
+    assert "nombre,descripcion,telefono,latitude,longitude,maps_url,photo_url" in response.text
+
+
+def test_bulk_upload_csv_processes_valid_rows(client, monkeypatch):
+    inserted = []
+    published = []
+    csv_content = (
+        "nombre,descripcion,telefono,latitude,longitude,maps_url,photo_url\n"
+        "Ana,Demo,300 123 4567,4.7,-74.0,,gs://bucket/demo.jpg\n"
+        "Bad,Demo,123,,,,\n"
+    )
+
+    monkeypatch.setattr(
+        habi,
+        "insert_bigquery_row",
+        lambda table_env_name, row: inserted.append((table_env_name, row)),
+    )
+    monkeypatch.setattr(
+        habi,
+        "publish_submission_event",
+        lambda event: published.append(event) or "message-id",
+    )
+    monkeypatch.setattr(
+        habi,
+        "upload_bulk_source",
+        lambda *_args: "gs://bucket/bulk_uploads/source.csv",
+    )
+
+    response = client.post(
+        "/habi/data_crawling/bulk_phone_upload",
+        data={
+            "bulk_file": (
+                BytesIO(csv_content.encode("utf-8")),
+                "contacts.csv",
+            )
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    assert response.json["valid_count"] == 1
+    assert response.json["invalid_count"] == 1
+    assert response.json["strategy"]["mode"] == "complete"
+    assert response.json["published_count"] == 1
+    assert inserted[0][0] == "BQ_BULK_UPLOADS_TABLE"
+    assert inserted[1][0] == "BQ_SUBMISSIONS_TABLE"
+    assert published[0]["telefonos"] == ["3001234567"]
+
+
+def test_bulk_upload_json_accepts_records_object(client, monkeypatch):
+    monkeypatch.setattr(habi, "insert_bigquery_row", lambda *_args: None)
+    monkeypatch.setattr(habi, "publish_submission_event", lambda _event: "message-id")
+    monkeypatch.setattr(habi, "upload_bulk_source", lambda *_args: None)
+
+    response = client.post(
+        "/habi/data_crawling/bulk_phone_upload",
+        data={
+            "bulk_file": (
+                BytesIO(json.dumps({
+                    "records": [
+                        {
+                            "nombre": "Ana",
+                            "telefono": "+57 310 987 6543",
+                            "maps_url": "https://www.google.com/maps/@4.6482837,-74.2478938,17z",
+                        }
+                    ]
+                }).encode("utf-8")),
+                "contacts.json",
+            )
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    assert response.json["valid_count"] == 1

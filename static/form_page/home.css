@@ -203,6 +203,27 @@ body {
     font-size: 13px;
 }
 
+.bulk-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.bulk-upload-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    align-items: center;
+}
+
+.bulk-status {
+    color: var(--habi-gray);
+    font-size: 13px;
+    margin-top: 12px;
+    min-height: 20px;
+}
+
 .phone-list {
     display: grid;
     gap: 10px;
@@ -302,6 +323,14 @@ body {
     }
 
     .form-footer button {
+        width: 100%;
+    }
+
+    .bulk-upload-row {
+        grid-template-columns: 1fr;
+    }
+
+    .bulk-upload-row button {
         width: 100%;
     }
 

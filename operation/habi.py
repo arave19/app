@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import base64
+import csv
+import io
 import json
 import os
 import random
@@ -11,7 +13,7 @@ from datetime import datetime, timezone
 from urllib.parse import unquote, urlparse
 
 import requests
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, Response, jsonify, render_template, request
 
 
 habi_data_crawling_api = Blueprint(
@@ -41,6 +43,21 @@ ALLOWED_MAPS_HOSTS = (
 PHONE_PATTERN = re.compile(
     r"(?:(?:\+|00)\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,12}\d"
 )
+
+BULK_CSV_HEADERS = [
+    "nombre",
+    "descripcion",
+    "telefono",
+    "latitude",
+    "longitude",
+    "maps_url",
+    "photo_url",
+]
+
+BULK_COMPLETE_LIMIT = 100
+BULK_BATCH_LIMIT = 5000
+BULK_BATCH_SIZE = 500
+BULK_CHUNK_SIZE = 1000
 
 
 def utc_now_iso():
@@ -206,6 +223,24 @@ def upload_photo(photo, submission_id):
     return f"gs://{bucket_name}/{object_name}"
 
 
+def upload_bulk_source(upload_id, filename, content, content_type):
+    bucket_name = env("BULK_UPLOAD_BUCKET") or env("IMAGE_BUCKET")
+
+    if not bucket_name:
+        return None
+
+    safe_filename = os.path.basename(filename or "bulk_upload.csv")
+    object_name = f"bulk_uploads/{upload_id}/{safe_filename}"
+    bucket = get_storage_client().bucket(bucket_name)
+    blob = bucket.blob(object_name)
+    blob.upload_from_string(
+        content,
+        content_type=content_type or "application/octet-stream",
+    )
+
+    return f"gs://{bucket_name}/{object_name}"
+
+
 def insert_bigquery_row(table_env_name, row):
     table_id = env(table_env_name)
 
@@ -235,6 +270,238 @@ def publish_submission_event(event):
     )
 
     return future.result(timeout=30)
+
+
+def build_bulk_csv_template():
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=BULK_CSV_HEADERS)
+    writer.writeheader()
+    writer.writerow({
+        "nombre": "Ana Gomez",
+        "descripcion": "Contacto cargado por archivo CSV",
+        "telefono": "3001234567",
+        "latitude": "4.710989",
+        "longitude": "-74.072092",
+        "maps_url": "",
+        "photo_url": "gs://habi-form-aravel-344022-dev-images/evidence/demo.jpg",
+    })
+    writer.writerow({
+        "nombre": "Carlos Perez",
+        "descripcion": "Registro con coordenadas desde Google Maps",
+        "telefono": "+573109876543",
+        "latitude": "",
+        "longitude": "",
+        "maps_url": "https://www.google.com/maps/@4.6482837,-74.2478938,17z",
+        "photo_url": "",
+    })
+
+    return output.getvalue()
+
+
+def build_bulk_json_sample():
+    return {
+        "records": [
+            {
+                "nombre": "Ana Gomez",
+                "descripcion": "Contacto cargado por JSON",
+                "telefono": "3001234567",
+                "latitude": 4.710989,
+                "longitude": -74.072092,
+                "maps_url": "",
+                "photo_url": "gs://habi-form-aravel-344022-dev-images/evidence/demo.jpg",
+            },
+            {
+                "nombre": "Carlos Perez",
+                "descripcion": "Registro con URL de Google Maps",
+                "telefono": "+573109876543",
+                "latitude": "",
+                "longitude": "",
+                "maps_url": "https://www.google.com/maps/@4.6482837,-74.2478938,17z",
+                "photo_url": "",
+            },
+        ]
+    }
+
+
+def parse_bulk_content(filename, raw_content):
+    extension = os.path.splitext(filename or "")[1].lower()
+    text = raw_content.decode("utf-8-sig")
+
+    if extension == ".json":
+        payload = json.loads(text)
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict) and isinstance(payload.get("records"), list):
+            return payload["records"]
+        raise ValueError("El JSON debe ser una lista o un objeto con records")
+
+    if extension == ".csv":
+        reader = csv.DictReader(io.StringIO(text))
+        missing_headers = [
+            header for header in BULK_CSV_HEADERS if header not in (reader.fieldnames or [])
+        ]
+        if missing_headers:
+            raise ValueError(
+                f"Faltan columnas requeridas: {', '.join(missing_headers)}"
+            )
+        return list(reader)
+
+    raise ValueError("El archivo debe ser .csv o .json")
+
+
+def build_bulk_submission(record, upload_id, sequence):
+    phone = normalize_phone(str(record.get("telefono") or ""))
+
+    if not phone:
+        raise ValueError("telefono invalido")
+
+    latitude = parse_optional_float(record.get("latitude"))
+    longitude = parse_optional_float(record.get("longitude"))
+    maps_url = str(record.get("maps_url") or "").strip()
+
+    if (latitude is None or longitude is None) and maps_url:
+        coordinates = extract_coordinates_from_maps_url(maps_url)
+        if coordinates:
+            latitude = coordinates["latitude"]
+            longitude = coordinates["longitude"]
+
+    return {
+        "submission_id": str(uuid.uuid4()),
+        "created_at": utc_now_iso(),
+        "nombre": clean_optional_string(record.get("nombre")),
+        "descripcion": clean_optional_string(record.get("descripcion")),
+        "latitude": latitude,
+        "longitude": longitude,
+        "accuracy": None,
+        "telefonos": [phone],
+        "photo_name": None,
+        "photo_url": clean_optional_string(record.get("photo_url")),
+        "source": "bulk-upload",
+        "bulk_upload_id": upload_id,
+        "bulk_sequence": sequence,
+    }
+
+
+def clean_optional_string(value):
+    if value in (None, ""):
+        return None
+
+    return str(value).strip() or None
+
+
+def parse_optional_float(value):
+    if value in (None, ""):
+        return None
+
+    return float(value)
+
+
+def determine_bulk_strategy(record_count):
+    if record_count <= BULK_COMPLETE_LIMIT:
+        return {
+            "mode": "complete",
+            "unit_size": record_count,
+            "estimated_units": 1 if record_count else 0,
+        }
+
+    if record_count <= BULK_BATCH_LIMIT:
+        return {
+            "mode": "batch",
+            "unit_size": BULK_BATCH_SIZE,
+            "estimated_units": (record_count + BULK_BATCH_SIZE - 1) // BULK_BATCH_SIZE,
+        }
+
+    return {
+        "mode": "chunk",
+        "unit_size": BULK_CHUNK_SIZE,
+        "estimated_units": (record_count + BULK_CHUNK_SIZE - 1) // BULK_CHUNK_SIZE,
+    }
+
+
+def process_bulk_submissions(submissions):
+    for submission in submissions:
+        bigquery_row = {
+            key: value
+            for key, value in submission.items()
+            if key not in ("bulk_upload_id", "bulk_sequence")
+        }
+        insert_bigquery_row("BQ_SUBMISSIONS_TABLE", bigquery_row)
+        publish_submission_event(submission)
+
+    return len(submissions)
+
+
+def should_run_dataflow():
+    return env("DATAFLOW_ENABLED", "false").lower() == "true"
+
+
+def launch_dataflow_bulk_job(upload_id, source_url, source_format, strategy):
+    template_path = env("DATAFLOW_TEMPLATE_GCS_PATH")
+
+    if not template_path:
+        raise RuntimeError("DATAFLOW_TEMPLATE_GCS_PATH no esta configurado")
+
+    from google.auth import default
+    from google.auth.transport.requests import Request
+
+    project_id = env("DATAFLOW_PROJECT_ID") or env("GOOGLE_CLOUD_PROJECT")
+    region = env("DATAFLOW_REGION", "us-central1")
+    credentials, detected_project_id = default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    project_id = project_id or detected_project_id
+    credentials.refresh(Request())
+
+    job_name = f"habi-bulk-{upload_id[:8]}"
+    request_body = {
+        "launchParameter": {
+            "jobName": job_name,
+            "containerSpecGcsPath": template_path,
+            "parameters": {
+                "input_file": source_url,
+                "input_format": source_format,
+                "pubsub_topic": env("PUBSUB_TOPIC", ""),
+                "submissions_table": env("BQ_SUBMISSIONS_TABLE", ""),
+                "upload_id": upload_id,
+                "processing_mode": strategy["mode"],
+                "unit_size": str(strategy["unit_size"]),
+            },
+            "environment": {
+                "tempLocation": env("DATAFLOW_TEMP_LOCATION"),
+                "stagingLocation": env("DATAFLOW_STAGING_LOCATION"),
+                "serviceAccountEmail": env("DATAFLOW_SERVICE_ACCOUNT_EMAIL"),
+            },
+        }
+    }
+
+    response = requests.post(
+        f"https://dataflow.googleapis.com/v1b3/projects/{project_id}/locations/{region}/flexTemplates:launch",
+        headers={
+            "Authorization": f"Bearer {credentials.token}",
+            "Content-Type": "application/json",
+        },
+        json=request_body,
+        timeout=30,
+    )
+    response.raise_for_status()
+
+    return response.json().get("job", {}).get("id") or job_name
+
+
+def build_bulk_upload_row(upload_id, source_url, filename, record_count, valid_count, invalid_count, strategy, status):
+    return {
+        "bulk_upload_id": upload_id,
+        "created_at": utc_now_iso(),
+        "source_file_url": source_url,
+        "source_filename": filename,
+        "record_count": record_count,
+        "valid_count": valid_count,
+        "invalid_count": invalid_count,
+        "processing_mode": strategy["mode"],
+        "unit_size": strategy["unit_size"],
+        "estimated_units": strategy["estimated_units"],
+        "status": status,
+    }
 
 
 def build_submission(form, photo):
@@ -422,6 +689,111 @@ def save_crawling():
         "message": "Formulario recibido correctamente",
         **submission,
     }), 200
+
+
+@habi_data_crawling_api.route("/bulk_phone_template.csv", methods=["GET"])
+def bulk_phone_template():
+    return Response(
+        build_bulk_csv_template(),
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=habi_bulk_phone_template.csv"
+        },
+    )
+
+
+@habi_data_crawling_api.route("/bulk_phone_sample.json", methods=["GET"])
+def bulk_phone_sample():
+    return jsonify(build_bulk_json_sample()), 200
+
+
+@habi_data_crawling_api.route("/bulk_phone_upload", methods=["POST"])
+def bulk_phone_upload():
+    upload = request.files.get("bulk_file")
+
+    if not upload:
+        return jsonify({
+            "message": "Debe adjuntar un archivo CSV o JSON",
+        }), 400
+
+    upload_id = str(uuid.uuid4())
+    raw_content = upload.read()
+    source_format = os.path.splitext(upload.filename or "")[1].lower().replace(".", "")
+
+    try:
+        raw_records = parse_bulk_content(upload.filename, raw_content)
+        submissions = []
+        errors = []
+
+        for index, record in enumerate(raw_records, start=1):
+            try:
+                submissions.append(
+                    build_bulk_submission(record, upload_id, index)
+                )
+            except Exception as error:
+                errors.append({
+                    "row": index,
+                    "message": str(error),
+                })
+
+        if not submissions:
+            return jsonify({
+                "message": "El archivo no tiene registros validos",
+                "errors": errors[:20],
+            }), 422
+
+        strategy = determine_bulk_strategy(len(submissions))
+        source_url = upload_bulk_source(
+            upload_id,
+            upload.filename,
+            raw_content,
+            upload.mimetype,
+        )
+
+        status = "queued_dataflow" if should_run_dataflow() else "processed_dev_fallback"
+        bulk_row = build_bulk_upload_row(
+            upload_id,
+            source_url,
+            upload.filename,
+            len(raw_records),
+            len(submissions),
+            len(errors),
+            strategy,
+            status,
+        )
+        insert_bigquery_row("BQ_BULK_UPLOADS_TABLE", bulk_row)
+
+        dataflow_job_id = None
+        published_count = 0
+
+        if should_run_dataflow():
+            dataflow_job_id = launch_dataflow_bulk_job(
+                upload_id,
+                source_url,
+                source_format,
+                strategy,
+            )
+        else:
+            published_count = process_bulk_submissions(submissions)
+
+        return jsonify({
+            "message": "Cargue masivo recibido",
+            "bulk_upload_id": upload_id,
+            "source_file_url": source_url,
+            "record_count": len(raw_records),
+            "valid_count": len(submissions),
+            "invalid_count": len(errors),
+            "strategy": strategy,
+            "dataflow_enabled": should_run_dataflow(),
+            "dataflow_job_id": dataflow_job_id,
+            "published_count": published_count,
+            "errors": errors[:20],
+        }), 200
+
+    except ValueError as error:
+        return jsonify({
+            "message": str(error),
+        }), 400
 
 
 @habi_data_crawling_api.route("/process_call", methods=["POST"])

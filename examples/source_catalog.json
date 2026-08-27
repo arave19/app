@@ -1,0 +1,41 @@
+{
+  "problem": "Priorizacion de contactabilidad para registros inmobiliarios capturados con evidencia fotografica o cargue masivo.",
+  "selected_sources": [
+    {
+      "name": "Formulario Habi",
+      "type": "multipart form",
+      "format": "HTML form + image",
+      "reason": "Fuente primaria operacional para capturar evidencia, telefonos, ubicacion y descripcion del caso."
+    },
+    {
+      "name": "Cargue masivo CSV",
+      "type": "local file upload",
+      "format": "CSV",
+      "reason": "Permite procesar bases extensas de telefonos entregadas por operaciones o aliados."
+    },
+    {
+      "name": "Cargue masivo JSON",
+      "type": "local file upload or API-like payload",
+      "format": "JSON",
+      "reason": "Permite recibir datos semiestructurados extensos con el mismo contrato funcional del CSV."
+    },
+    {
+      "name": "Google Maps URL resolver",
+      "type": "remote API/web request",
+      "format": "HTTP URL",
+      "reason": "Permite resolver URLs cortas o complejas de Google Maps y extraer coordenadas."
+    },
+    {
+      "name": "PaddleOCR",
+      "type": "image processing",
+      "format": "image to text",
+      "reason": "Extrae telefonos directamente desde evidencia fotografica antes de guardar el formulario."
+    }
+  ],
+  "discarded_sources": [
+    {
+      "name": "APIs inmobiliarias externas de precios",
+      "reason": "El alcance final prioriza pipeline transaccional de captura, evidencia, contactabilidad y llamada fake. Se documenta como extension futura para scoring de valor inmobiliario."
+    }
+  ]
+}

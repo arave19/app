@@ -1,0 +1,3 @@
+nombre,descripcion,telefono,latitude,longitude,maps_url,photo_url
+Ana Gomez,Contacto cargado por CSV,3001234567,4.710989,-74.072092,,gs://habi-form-aravel-344022-dev-images/evidence/demo.jpg
+Carlos Perez,Registro con coordenadas desde Google Maps,+573109876543,,,https://www.google.com/maps/@4.6482837,-74.2478938,17z,

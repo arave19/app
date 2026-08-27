@@ -17,6 +17,9 @@ const extractMapsCoordinatesUrl =
 const detectPhonesUrl =
     evidenceForm.dataset.detectPhonesUrl;
 
+const bulkUploadUrl =
+    evidenceForm.dataset.bulkUploadUrl;
+
 const maxPhoneCount =
     5;
 
@@ -67,6 +70,111 @@ const submitFormBtn =
 
 const submitFormBtnContent =
     submitFormBtn.innerHTML;
+
+const bulkPhoneInput =
+    document.getElementById("bulkPhoneInput");
+
+const bulkUploadBtn =
+    document.getElementById("bulkUploadBtn");
+
+const bulkStatus =
+    document.getElementById("bulkStatus");
+
+const bulkUploadBtnContent =
+    bulkUploadBtn.innerHTML;
+
+
+bulkUploadBtn.addEventListener(
+    "click",
+    async function () {
+
+        const file =
+            bulkPhoneInput.files[0];
+
+        if (!file) {
+
+            bulkStatus.textContent =
+                "Selecciona un archivo CSV o JSON.";
+
+            return;
+
+        }
+
+        const formData =
+            new FormData();
+
+        formData.append(
+            "bulk_file",
+            file
+        );
+
+        bulkUploadBtn.disabled =
+            true;
+
+        bulkUploadBtn.innerHTML =
+            '<i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Procesando...';
+
+        bulkStatus.textContent =
+            "Cargando archivo y preparando procesamiento...";
+
+        try {
+
+            const response =
+                await fetch(
+                    bulkUploadUrl,
+                    {
+                        method: "POST",
+                        body: formData
+                    }
+                );
+
+            const data =
+                await response.json().catch(
+                    function () {
+                        return {};
+                    }
+                );
+
+            if (!response.ok) {
+
+                throw new Error(
+                    data.message || "No fue posible cargar el archivo."
+                );
+
+            }
+
+            const strategy =
+                data.strategy || {};
+
+            bulkStatus.textContent =
+                `Cargue ${data.bulk_upload_id}: ${data.valid_count} validos, ${data.invalid_count} invalidos, modo ${strategy.mode}.`;
+
+            bulkPhoneInput.value =
+                "";
+
+        }
+
+        catch (error) {
+
+            console.error(error);
+
+            bulkStatus.textContent =
+                error.message;
+
+        }
+
+        finally {
+
+            bulkUploadBtn.disabled =
+                false;
+
+            bulkUploadBtn.innerHTML =
+                bulkUploadBtnContent;
+
+        }
+
+    }
+);
 
 
 takePhotoBtn.addEventListener(

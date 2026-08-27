@@ -70,7 +70,74 @@
                 data-save-url="{{ url_for('habi_data_crawling_api.save_crawling') }}"
                 data-extract-url="{{ url_for('habi_data_crawling_api.extract_maps_coordinates') }}"
                 data-detect-phones-url="{{ url_for('habi_data_crawling_api.detect_phones') }}"
+                data-bulk-upload-url="{{ url_for('habi_data_crawling_api.bulk_phone_upload') }}"
             >
+
+                <div class="section">
+
+                    <div class="section-title">
+                        Cargue masivo de telefonos
+                    </div>
+
+                    <div class="section-description">
+                        Sube contactos en CSV o JSON para procesarlos y enviarlos al flujo de llamadas fake.
+                    </div>
+
+
+                    <div class="bulk-actions">
+
+                        <a
+                            class="btn btn-secondary-habi"
+                            href="{{ url_for('habi_data_crawling_api.bulk_phone_template') }}"
+                        >
+                            <i class="fa-solid fa-file-csv" aria-hidden="true"></i>
+                            Plantilla CSV
+                        </a>
+
+
+                        <a
+                            class="btn btn-secondary-habi"
+                            href="{{ url_for('habi_data_crawling_api.bulk_phone_sample') }}"
+                            target="_blank"
+                            rel="noreferrer"
+                        >
+                            <i class="fa-solid fa-code" aria-hidden="true"></i>
+                            Ejemplo JSON
+                        </a>
+
+                    </div>
+
+
+                    <div class="bulk-upload-row">
+
+                        <input
+                            type="file"
+                            id="bulkPhoneInput"
+                            accept=".csv,application/json,.json,text/csv"
+                            class="form-control"
+                        >
+
+                        <button
+                            type="button"
+                            class="btn btn-habi"
+                            id="bulkUploadBtn"
+                        >
+                            <i class="fa-solid fa-cloud-arrow-up" aria-hidden="true"></i>
+                            Cargar telefonos
+                        </button>
+
+                    </div>
+
+
+                    <div
+                        class="bulk-status"
+                        id="bulkStatus"
+                    >
+                        Esperando archivo CSV o JSON.
+                    </div>
+
+                </div>
+
 
                 <div class="section">
 
