@@ -1,0 +1,10 @@
+Flask
+Flask-Cors
+requests
+google-cloud-bigquery
+google-cloud-pubsub
+google-cloud-storage
+gunicorn
+paddleocr==3.7.0
+paddlepaddle==3.3.1
+pytest
